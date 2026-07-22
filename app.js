@@ -7,7 +7,19 @@ function loadSettings(){
 }
 function saveSettings(s){ localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
 
-let settings = loadSettings();
+const DEFAULT_SETTINGS = {
+  clientId: '928002501379-ltduio6o1125pce5fodqucd419e4ebi5.apps.googleusercontent.com',
+  sheetId: '12Xu85bnpRe_rMirl5h0fBUpCDyXzgCE6',
+  sheetName: 'LISTA ORIGINAL',
+  colIsbn: 'P',
+  colTitle: 'D',
+  colOwner: 'J',
+  colAuthor: 'F',
+  colEdition: '',
+  booksKey: '',
+};
+
+let settings = Object.assign({}, DEFAULT_SETTINGS, loadSettings());
 
 const els = {
   settingsBtn: document.getElementById('settingsBtn'),
@@ -27,6 +39,11 @@ const els = {
   signInBtn: document.getElementById('signInBtn'),
   authStatus: document.getElementById('authStatus'),
   video: document.getElementById('video'),
+  torchBtn: document.getElementById('torchBtn'),
+  setupBanner: document.getElementById('setupBanner'),
+  setupBannerBtn: document.getElementById('setupBannerBtn'),
+  manualInput: document.getElementById('manualInput'),
+  manualLookupBtn: document.getElementById('manualLookupBtn'),
   scanStatus: document.getElementById('scanStatus'),
   modeBarcode: document.getElementById('modeBarcode'),
   modeCover: document.getElementById('modeCover'),
@@ -46,38 +63,55 @@ const els = {
 };
 
 function fillSettingsForm(){
-  els.clientId.value  = settings.clientId  || '';
-  els.sheetId.value   = settings.sheetId   || '';
-  els.sheetName.value = settings.sheetName || 'Library';
-  els.colIsbn.value   = settings.colIsbn   || 'A';
-  els.colTitle.value  = settings.colTitle  || 'B';
-  els.colOwner.value  = settings.colOwner  || 'Dueño';
-  els.colAuthor.value = settings.colAuthor || 'C';
-  els.colEdition.value= settings.colEdition|| '';
-  els.booksKey.value  = settings.booksKey  || '';
+  els.clientId.value  = settings.clientId  || DEFAULT_SETTINGS.clientId;
+  els.sheetId.value   = settings.sheetId   || DEFAULT_SETTINGS.sheetId;
+  els.sheetName.value = settings.sheetName || DEFAULT_SETTINGS.sheetName;
+  els.colIsbn.value   = settings.colIsbn   || DEFAULT_SETTINGS.colIsbn;
+  els.colTitle.value  = settings.colTitle  || DEFAULT_SETTINGS.colTitle;
+  els.colOwner.value  = settings.colOwner  || DEFAULT_SETTINGS.colOwner;
+  els.colAuthor.value = settings.colAuthor || DEFAULT_SETTINGS.colAuthor;
+  els.colEdition.value= settings.colEdition|| DEFAULT_SETTINGS.colEdition;
+  els.booksKey.value  = settings.booksKey  || DEFAULT_SETTINGS.booksKey;
 }
 fillSettingsForm();
 
+function refreshSetupBanner(){
+  const ready = settings.clientId && settings.sheetId;
+  els.setupBanner.classList.toggle('hidden', !!ready);
+}
+refreshSetupBanner();
+
+els.setupBannerBtn.onclick = () => {
+  els.settingsPanel.classList.remove('hidden');
+  els.scanView.classList.add('hidden');
+  els.resultView.classList.add('hidden');
+  els.setupBanner.classList.add('hidden');
+};
+
 els.settingsBtn.onclick = () => {
+  const opening = els.settingsPanel.classList.contains('hidden');
   els.settingsPanel.classList.toggle('hidden');
   els.scanView.classList.toggle('hidden');
   els.resultView.classList.add('hidden');
+  els.setupBanner.classList.toggle('hidden', opening);
+  if (!opening) refreshSetupBanner();
 };
 
 els.saveSettings.onclick = () => {
   settings = {
-    clientId: els.clientId.value.trim(),
-    sheetId: els.sheetId.value.trim(),
-    sheetName: els.sheetName.value.trim() || 'Library',
-    colIsbn: els.colIsbn.value.trim() || 'A',
-    colTitle: els.colTitle.value.trim() || 'B',
-    colOwner: els.colOwner.value.trim() || 'Dueño',
+    clientId: els.clientId.value.trim() || DEFAULT_SETTINGS.clientId,
+    sheetId: els.sheetId.value.trim() || DEFAULT_SETTINGS.sheetId,
+    sheetName: els.sheetName.value.trim() || DEFAULT_SETTINGS.sheetName,
+    colIsbn: els.colIsbn.value.trim() || DEFAULT_SETTINGS.colIsbn,
+    colTitle: els.colTitle.value.trim() || DEFAULT_SETTINGS.colTitle,
+    colOwner: els.colOwner.value.trim() || DEFAULT_SETTINGS.colOwner,
     colAuthor: els.colAuthor.value.trim() || '',
     colEdition: els.colEdition.value.trim() || '',
     booksKey: els.booksKey.value.trim(),
   };
   saveSettings(settings);
-  els.authStatus.textContent = 'Saved.';
+  els.authStatus.textContent = 'Saved ✓';
+  refreshSetupBanner();
 };
 
 /* ---------- Google OAuth (Identity Services, token client) ---------- */
@@ -147,20 +181,58 @@ async function startQrRegion(){
   }
   region.style.display = 'block';
   html5QrCode = new Html5Qrcode('qrRegion', {
-    formatsToSupport: [ Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.UPC_A ],
+    formatsToSupport: [
+      Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
+      Html5QrcodeSupportedFormats.CODE_128,
+    ],
     verbose: false,
   });
   try {
     scanning = true;
     await html5QrCode.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 240, height: 160 } },
+      { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      {
+        fps: 20,
+        // Scan a wide, short band across most of the frame — matches a barcode's
+        // shape and doesn't force the user to hit one tiny fixed-size box.
+        qrbox: (viewfinderW, viewfinderH) => ({
+          width: Math.floor(viewfinderW * 0.85),
+          height: Math.floor(Math.min(viewfinderH * 0.4, viewfinderW * 0.5)),
+        }),
+        aspectRatio: 1.0,
+        disableFlip: false,
+      },
       (decodedText) => onIsbnDecoded(decodedText),
       () => {} // ignore per-frame scan failures
     );
+    detectTorchSupport();
   } catch (err) {
-    els.scanStatus.textContent = 'Camera error: ' + err;
+    els.scanStatus.textContent = '⚠ Camera error: ' + err;
   }
+}
+
+/* Torch (flashlight) toggle, when the device supports it */
+let torchOn = false;
+function detectTorchSupport(){
+  try {
+    const caps = html5QrCode.getRunningTrackCapabilities();
+    if (caps && caps.torch) {
+      els.torchBtn.classList.remove('hidden');
+    } else {
+      els.torchBtn.classList.add('hidden');
+    }
+  } catch { els.torchBtn.classList.add('hidden'); }
+}
+if (els.torchBtn) {
+  els.torchBtn.onclick = async () => {
+    if (!html5QrCode || !scanning) return;
+    torchOn = !torchOn;
+    try {
+      await html5QrCode.applyVideoConstraints({ advanced: [{ torch: torchOn }] });
+      els.torchBtn.classList.toggle('active', torchOn);
+    } catch { /* not supported on this device/browser */ }
+  };
 }
 
 function stopEverything(){
@@ -168,6 +240,8 @@ function stopEverything(){
     html5QrCode.stop().catch(()=>{});
     scanning = false;
   }
+  torchOn = false;
+  if (els.torchBtn) { els.torchBtn.classList.add('hidden'); els.torchBtn.classList.remove('active'); }
   const region = document.getElementById('qrRegion');
   if (region) region.style.display = 'none';
   els.video.style.display = 'block';
@@ -178,7 +252,8 @@ function onIsbnDecoded(text){
   if (text === lastDecoded) return; // debounce repeat frames
   lastDecoded = text;
   const isbn = text.replace(/[^0-9Xx]/g, '');
-  els.scanStatus.textContent = 'Found barcode: ' + isbn;
+  els.scanStatus.textContent = '✓ Barcode found — looking it up…';
+  els.scanStatus.className = 'status success';
   stopEverything();
   lookupByIsbn(isbn);
 }
@@ -205,6 +280,9 @@ function setMode(mode){
   els.modeBarcode.classList.toggle('active', mode === 'barcode');
   els.modeCover.classList.toggle('active', mode === 'cover');
   els.captureBtn.style.display = mode === 'cover' ? 'block' : 'none';
+  document.getElementById('modeTip').textContent = mode === 'barcode'
+    ? 'Tip: hold steady about 4–6 inches from the barcode, in good light. Fill as much of the frame as you can.'
+    : 'Tip: frame the title and author clearly, avoid glare, and hold the phone still before tapping capture.';
   stopCoverCamera();
   lastDecoded = null;
   if (mode === 'barcode') startBarcodeScan();
@@ -233,6 +311,19 @@ els.captureBtn.onclick = async () => {
   }
 };
 
+els.manualLookupBtn.onclick = () => {
+  const raw = els.manualInput.value.trim();
+  if (!raw) return;
+  const digitsOnly = raw.replace(/[^0-9Xx]/g, '');
+  els.scanStatus.textContent = 'Searching Google Books…';
+  els.scanStatus.className = 'status';
+  if (digitsOnly.length === 10 || digitsOnly.length === 13) {
+    lookupByIsbn(digitsOnly);
+  } else {
+    lookupByText(raw);
+  }
+};
+
 /* ---------- Google Books lookup ---------- */
 async function lookupByIsbn(isbn){
   const key = settings.booksKey ? '&key=' + encodeURIComponent(settings.booksKey) : '';
@@ -252,7 +343,8 @@ async function lookupByText(text){
 
 function handleBooksResult(json, fallbackIsbn){
   if (!json.items || !json.items.length) {
-    els.scanStatus.textContent = 'No match found in Google Books. Try again or use the other mode.';
+    els.scanStatus.textContent = '✗ No match found in Google Books. Try again, use Cover photo mode, or enter it manually below.';
+    els.scanStatus.className = 'status error';
     return;
   }
   const info = json.items[0].volumeInfo;
@@ -311,6 +403,16 @@ function resolveColumn(spec, headerRow){
   return idx; // -1 if not found
 }
 
+// Normalize a title for loose comparison: lowercase, strip punctuation/accents, collapse whitespace.
+function normalizeTitle(t){
+  return (t || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // strip accents
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 let resolvedCols = {}; // isbn, title, author, owner, edition -> 0-based index
 
 async function findRowInSheet(book){
@@ -345,19 +447,45 @@ async function findRowInSheet(book){
       return;
     }
 
+    // Pass 1: match by ISBN — most reliable when present on both sides.
     let foundRow = -1;
-    for (let i = 1; i < rows.length; i++) { // skip header row
-      const row = rows[i];
-      const cellIsbn = resolvedCols.isbn >= 0 ? (row[resolvedCols.isbn] || '').replace(/[^0-9Xx]/g, '') : '';
-      const cellTitle = resolvedCols.title >= 0 ? (row[resolvedCols.title] || '').toLowerCase().trim() : '';
-      if (book.isbn && cellIsbn && cellIsbn === book.isbn) { foundRow = i; break; }
-      if (foundRow < 0 && book.title && cellTitle && cellTitle === book.title.toLowerCase().trim()) { foundRow = i; break; }
+    let matchedBy = '';
+    if (book.isbn && resolvedCols.isbn >= 0) {
+      for (let i = 1; i < rows.length; i++) {
+        const cellIsbn = (rows[i][resolvedCols.isbn] || '').replace(/[^0-9Xx]/g, '');
+        if (cellIsbn && cellIsbn === book.isbn) { foundRow = i; matchedBy = 'ISBN'; break; }
+      }
+    }
+
+    // Pass 2: no ISBN match (or no ISBN at all) — fall back to title.
+    // Many sheet rows won't have an ISBN filled in, so this is the common path.
+    if (foundRow < 0 && book.title && resolvedCols.title >= 0) {
+      const wanted = normalizeTitle(book.title);
+      let bestScore = 0;
+      for (let i = 1; i < rows.length; i++) {
+        const cellTitle = normalizeTitle(rows[i][resolvedCols.title] || '');
+        if (!cellTitle) continue;
+        let score = 0;
+        if (cellTitle === wanted) score = 100;
+        else if (cellTitle.includes(wanted) || wanted.includes(cellTitle)) score = 80;
+        else {
+          // token overlap, e.g. "hobbit" vs "the hobbit an unexpected journey"
+          const wTokens = new Set(wanted.split(' ').filter(w => w.length > 2));
+          const cTokens = new Set(cellTitle.split(' ').filter(w => w.length > 2));
+          if (wTokens.size) {
+            let overlap = 0;
+            wTokens.forEach(t => { if (cTokens.has(t)) overlap++; });
+            score = (overlap / wTokens.size) * 60;
+          }
+        }
+        if (score > bestScore && score >= 55) { bestScore = score; foundRow = i; matchedBy = 'title'; }
+      }
     }
 
     els.addRowBtn.classList.add('hidden');
     if (foundRow >= 0) {
       matchedRowNumber = foundRow + 1; // 1-indexed for A1 notation
-      els.matchStatus.textContent = `Matched row ${matchedRowNumber} in "${settings.sheetName}".`;
+      els.matchStatus.textContent = `Matched row ${matchedRowNumber} in "${settings.sheetName}" (by ${matchedBy}).`;
       els.matchBox.classList.remove('notfound'); els.matchBox.classList.add('found');
       els.updateOwnerBtn.disabled = false;
     } else {
@@ -383,9 +511,11 @@ els.updateOwnerBtn.onclick = async () => {
     const cell = `${settings.sheetName}!${ownerLetter}${matchedRowNumber}`;
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${settings.sheetId}/values/${encodeURIComponent(cell)}?valueInputOption=USER_ENTERED`;
     await authedFetch(url, { method: 'PUT', body: JSON.stringify({ values: [[owner]] }) });
-    els.matchStatus.textContent = `Owner updated to "${owner}" ✓`;
+    els.matchStatus.textContent = `✓ Owner updated to "${owner}"`;
+    els.matchStatus.className = 'status success';
   } catch (err) {
-    els.matchStatus.textContent = 'Update failed: ' + err.message;
+    els.matchStatus.textContent = '✗ Update failed: ' + err.message;
+    els.matchStatus.className = 'status error';
     els.updateOwnerBtn.disabled = false;
   }
 };
@@ -412,10 +542,12 @@ els.addRowBtn.onclick = async () => {
     const range = `${settings.sheetName}!A:Z`;
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${settings.sheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
     await authedFetch(url, { method: 'POST', body: JSON.stringify({ values: [newRow] }) });
-    els.matchStatus.textContent = 'Added as a new book in your sheet ✓';
+    els.matchStatus.textContent = '✓ Added as a new book in your sheet';
+    els.matchStatus.className = 'status success';
     els.addRowBtn.classList.add('hidden');
   } catch (err) {
-    els.matchStatus.textContent = 'Could not add row: ' + err.message;
+    els.matchStatus.textContent = '✗ Could not add row: ' + err.message;
+    els.matchStatus.className = 'status error';
   } finally {
     els.addRowBtn.disabled = false;
   }
@@ -425,6 +557,8 @@ els.scanAgainBtn.onclick = () => {
   els.resultView.classList.add('hidden');
   els.scanView.classList.remove('hidden');
   els.ownerInput.value = '';
+  els.manualInput.value = '';
+  els.scanStatus.className = 'status';
   lastDecoded = null;
   setMode(currentMode);
 };

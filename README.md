@@ -20,7 +20,21 @@ logic can be ported into a native app (e.g. with React Native or Swift).
 
 ---
 
-## One-time setup (about 10 minutes)
+## Already configured for you
+
+This copy comes pre-filled with your Client ID, Sheet ID, tab name
+(`LISTA ORIGINAL`), and columns (ISBN: P, Title: D, Owner: J, Author: F) —
+so if this is going to be used against the same sheet, you can skip most of
+the setup below and just:
+1. Make sure your Google account has Editor access to that sheet, and is
+   added as a test user in the OAuth consent screen (see "Who can sign in" below).
+2. Host the files (see hosting section) and open Settings once to tap
+   **Sign in with Google**.
+
+You can still override any of these values in Settings if needed — your
+changes are saved in the browser and take priority over the built-in defaults.
+
+## One-time setup (about 10 minutes, if starting from scratch)
 
 ### 1. Get a Google Cloud OAuth Client ID (for writing to Sheets)
 1. Go to https://console.cloud.google.com/ and create a new project (or use an existing one).
@@ -68,7 +82,11 @@ session.
    auto-detects the ISBN and looks it up.
 2. If there's no barcode, tap **Cover photo**, frame the title/author, and
    tap **Capture cover** — it OCRs the text and searches Google Books with it.
-3. The app then searches your Sheet for a matching row.
+3. The app then searches your Sheet for a matching row: first by ISBN, and
+   if that doesn't hit (many rows won't have an ISBN filled in), it falls
+   back to matching by title — using a loose comparison that ignores
+   punctuation/accents and tolerates subtitles or slightly different
+   wording, not just an exact string match.
 4. **If found:** type the new owner's name and tap **Update owner** — it
    writes directly into that row's owner column.
 5. **If not found:** an **"Add as new book in sheet"** button appears

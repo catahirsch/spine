@@ -33,41 +33,44 @@
     <p class="hint">One-time setup. See <code>README.md</code> for how to get these values.</p>
 
     <label>Google OAuth Client ID
-      <input type="text" id="clientId" placeholder="xxxxxxxx.apps.googleusercontent.com" />
+      <input type="text" id="clientId" placeholder="xxxxxxxx.apps.googleusercontent.com" value="928002501379-ltduio6o1125pce5fodqucd419e4ebi5.apps.googleusercontent.com" />
     </label>
 
     <label>Google Sheet ID
-      <input type="text" id="sheetId" placeholder="the long ID from your sheet's URL" />
+      <input type="text" id="sheetId" placeholder="the long ID from your sheet's URL" value="12Xu85bnpRe_rMirl5h0fBUpCDyXzgCE6" />
     </label>
 
     <label>Sheet / tab name
-      <input type="text" id="sheetName" placeholder="e.g. Library" value="Library" />
+      <input type="text" id="sheetName" placeholder="e.g. Library" value="LISTA ORIGINAL" />
     </label>
 
-    <p class="hint">Column fields accept a letter (e.g. <code>D</code>) or the exact header text from row 1 (e.g. <code>Dueño</code>).</p>
+    <p class="hint">Column fields below accept a letter (e.g. <code>D</code>) or the exact header text from row 1 (e.g. <code>Dueño</code>).</p>
     <div class="row">
       <label>ISBN column
-        <input type="text" id="colIsbn" value="A" />
+        <input type="text" id="colIsbn" value="P" />
       </label>
       <label>Title column
-        <input type="text" id="colTitle" value="B" />
-      </label>
-      <label>Owner column
-        <input type="text" id="colOwner" value="Dueño" />
+        <input type="text" id="colTitle" value="D" />
       </label>
     </div>
-    <div class="row">
-      <label>Author column <span class="opt">(for new rows)</span>
-        <input type="text" id="colAuthor" value="C" />
-      </label>
-      <label>Edition column <span class="opt">(for new rows)</span>
-        <input type="text" id="colEdition" value="" />
-      </label>
-    </div>
-
-    <label>Google Books API key <span class="opt">(optional, raises rate limits)</span>
-      <input type="text" id="booksKey" placeholder="optional" />
+    <label>Owner column
+      <input type="text" id="colOwner" value="J" />
     </label>
+
+    <details class="advanced">
+      <summary>Advanced (only needed for adding new books)</summary>
+      <div class="row">
+        <label>Author column
+          <input type="text" id="colAuthor" value="F" />
+        </label>
+        <label>Edition column
+          <input type="text" id="colEdition" value="" />
+        </label>
+      </div>
+      <label>Google Books API key <span class="opt">(optional, raises rate limits)</span>
+        <input type="text" id="booksKey" placeholder="optional" />
+      </label>
+    </details>
 
     <div class="btn-row">
       <button id="saveSettings" class="btn primary">Save</button>
@@ -76,21 +79,37 @@
     <p id="authStatus" class="status"></p>
   </section>
 
+  <!-- SETUP BANNER (shown until settings are filled in) -->
+  <div id="setupBanner" class="setup-banner hidden">
+    <p><strong>Almost ready.</strong> Finish the one-time setup to connect your Google Sheet.</p>
+    <button id="setupBannerBtn" class="btn primary">Open Settings</button>
+  </div>
+
   <!-- SCAN VIEW -->
   <section id="scanView" class="panel">
     <div class="scan-frame">
       <video id="video" playsinline muted></video>
       <div class="reticle"></div>
       <div class="scan-line"></div>
+      <button id="torchBtn" class="torch-btn hidden" title="Toggle flashlight">💡</button>
     </div>
 
     <div class="mode-toggle">
       <button id="modeBarcode" class="mode-btn active">Barcode</button>
       <button id="modeCover" class="mode-btn">Cover photo</button>
     </div>
+    <p class="tip" id="modeTip">Tip: hold steady about 4–6 inches from the barcode, in good light. Fill as much of the frame as you can.</p>
 
     <button id="captureBtn" class="btn primary wide">Capture cover</button>
     <p id="scanStatus" class="status">Point the camera at the barcode.</p>
+
+    <details class="manual-entry">
+      <summary>Can't scan it? Enter it manually</summary>
+      <label>ISBN or title
+        <input type="text" id="manualInput" placeholder="e.g. 9780143127550 or book title" />
+      </label>
+      <button id="manualLookupBtn" class="btn ghost wide">Look up</button>
+    </details>
   </section>
 
   <!-- RESULT VIEW -->
