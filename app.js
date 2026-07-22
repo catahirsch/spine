@@ -191,7 +191,7 @@ async function startQrRegion(){
   try {
     scanning = true;
     await html5QrCode.start(
-      { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      { facingMode: 'environment' },
       {
         fps: 20,
         // Scan a wide, short band across most of the frame — matches a barcode's
@@ -202,6 +202,13 @@ async function startQrRegion(){
         }),
         aspectRatio: 1.0,
         disableFlip: false,
+        // Resolution/facingMode hints go here, not in the first argument —
+        // html5-qrcode requires that first object to have exactly one key.
+        videoConstraints: {
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
       },
       (decodedText) => onIsbnDecoded(decodedText),
       () => {} // ignore per-frame scan failures
