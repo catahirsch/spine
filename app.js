@@ -197,8 +197,8 @@ async function startQrRegion(){
         // Scan a wide, short band across most of the frame — matches a barcode's
         // shape and doesn't force the user to hit one tiny fixed-size box.
         qrbox: (viewfinderW, viewfinderH) => ({
-          width: Math.floor(viewfinderW * 0.85),
-          height: Math.floor(Math.min(viewfinderH * 0.4, viewfinderW * 0.5)),
+          width: Math.max(50, Math.floor(viewfinderW * 0.85)),
+          height: Math.max(50, Math.floor(Math.min(viewfinderH * 0.4, viewfinderW * 0.5))),
         }),
         aspectRatio: 1.0,
         disableFlip: false,
@@ -265,26 +265,45 @@ function stopEverything(){
 
 let lastDecoded = null;
 function onIsbnDecoded(text){
-  if (text === lastDecoded) return; // debounce repeat frames
-  lastDecoded = text;
-  const isbn = text.replace(/[^0-9Xx]/g, '');
-  if (isbn.length !== 10 && isbn.length !== 13) {
-    // Likely a supplemental/price add-on barcode next to the real one, or a misread.
-    // Important: do NOT stop/restart the scanner here. The scan loop is already
-    // running fine — restarting it from inside its own decode callback raced
-    // the old camera stream against a newly-requested one and could freeze or
-    // crash the tab, especially on repeat reads of the same non-ISBN barcode.
-    els.scanStatus.textContent = `Read a barcode ("${isbn}") that isn't a valid ISBN length — try centering the main barcode.`;
+  try {
+    if (text === lastDecoded) return; // debounce repeat frames
+    lastDecoded = text;
+    const isbn = text.replace(/[^0-9Xx]/g, '');
+    if (isbn.length !== 10 && isbn.length !== 13) {
+      // Likely a supplemental/price add-on barcode next to the real one, or a misread.
+      // Important: do NOT stop/restart the scanner here. The scan loop is already
+      // running fine — restarting it from inside its own decode callback raced
+      // the old camera stream against a newly-requested one and could freeze or
+      // crash the tab, especially on repeat reads of the same non-ISBN barcode.
+      els.scanStatus.textContent = `Read a barcode ("${isbn}") that isn't a valid ISBN length — try centering the main barcode.`;
+      els.scanStatus.className = 'status error';
+      // Allow the same code to be considered again after a short pause, instead
+      // of clearing it immediately (which caused an instant re-trigger loop).
+      setTimeout(() => { if (lastDecoded === text) lastDecoded = null; }, 1500);
+      return;
+    }
+    els.scanStatus.textContent = '✓ Barcode found — looking it up…';
+    els.scanStatus.className = 'status success';
+    // Defer tearing down the camera to the next tick. html5-qrcode calls this
+    // callback from inside its own frame-processing loop, so calling stop()
+    // synchronously from in here can race the library's internal state
+    // machine — this shows up as a freeze/glitch, and it's timing-dependent,
+    // so it tends to happen on whichever barcodes happen to decode fastest
+    // rather than any one barcode type consistently. Deferring lets that
+    // in-flight frame finish before we touch the camera.
+    setTimeout(() => {
+      stopEverything();
+      lookupByIsbn(isbn);
+    }, 0);
+  } catch (err) {
+    // Never let an error here escape into html5-qrcode's own call stack —
+    // an uncaught throw at this point can silently kill its scan loop,
+    // which looks like the camera just freezing with no explanation.
+    console.error('onIsbnDecoded error:', err);
+    els.scanStatus.textContent = '⚠ Something went wrong reading that — try again.';
     els.scanStatus.className = 'status error';
-    // Allow the same code to be considered again after a short pause, instead
-    // of clearing it immediately (which caused an instant re-trigger loop).
-    setTimeout(() => { if (lastDecoded === text) lastDecoded = null; }, 1500);
-    return;
+    lastDecoded = null;
   }
-  els.scanStatus.textContent = '✓ Barcode found — looking it up…';
-  els.scanStatus.className = 'status success';
-  stopEverything();
-  lookupByIsbn(isbn);
 }
 
 /* ---------- Cover camera (plain getUserMedia, for OCR mode) ---------- */
@@ -322,37 +341,119 @@ function setMode(mode){
   else startCoverCamera();
 }
 
+// ---- OCR image preprocessing helpers ----
+// Otsu's method: picks the grayscale threshold that best splits the image
+// into two classes (ink vs. background), instead of a single fixed guess.
+// This is what actually lets stylized covers work — a hand-lettered or
+// low-contrast title needs a threshold tuned to *that* photo's lighting,
+// not a generic one.
+function otsuThreshold(gray, len){
+  const hist = new Array(256).fill(0);
+  for (let i = 0; i < len; i++) hist[gray[i]]++;
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sumB = 0, wB = 0, maxVar = -1, threshold = 128;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (wB === 0) continue;
+    const wF = len - wB;
+    if (wF === 0) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB, mF = (sum - sumB) / wF;
+    const varBetween = wB * wF * (mB - mF) * (mB - mF);
+    if (varBetween > maxVar) { maxVar = varBetween; threshold = t; }
+  }
+  return threshold;
+}
+
+// Crops a region of the live video into a canvas, upscales small crops
+// (stylized/thin fonts need more pixels to survive thresholding), sharpens
+// to help thin or cursive strokes, then binarizes — auto-detecting whether
+// the cover has dark text on a light background or light text on a dark
+// background (very common on cover art) and normalizing to black-on-white,
+// which OCR engines are tuned for.
+function captureAndPrepCanvas(sx, sy, sW, sH){
+  const raw = document.createElement('canvas');
+  raw.width = sW; raw.height = sH;
+  raw.getContext('2d').drawImage(els.video, sx, sy, sW, sH, 0, 0, sW, sH);
+
+  const canvas = els.hiddenCanvas;
+  const targetW = Math.min(1600, Math.max(sW, 900));
+  const scale = targetW / sW;
+  canvas.width = Math.round(sW * scale);
+  canvas.height = Math.round(sH * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(raw, 0, 0, canvas.width, canvas.height);
+
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imgData.data;
+  const w = canvas.width, h = canvas.height, len = w * h;
+  const gray = new Uint8ClampedArray(len);
+  for (let i = 0, p = 0; p < len; i += 4, p++) {
+    gray[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+  }
+
+  // Light unsharp-mask pass on the grayscale buffer: helps thin serif/cursive
+  // strokes that a straight threshold would otherwise erode away.
+  const sharp = new Uint8ClampedArray(len);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = y * w + x;
+      if (x === 0 || y === 0 || x === w - 1 || y === h - 1) { sharp[idx] = gray[idx]; continue; }
+      const sum = gray[idx] * 5
+        - gray[idx - 1] - gray[idx + 1] - gray[idx - w] - gray[idx + w];
+      sharp[idx] = sum;
+    }
+  }
+
+  const threshold = otsuThreshold(sharp, len);
+  let aboveCount = 0;
+  for (let p = 0; p < len; p++) if (sharp[p] > threshold) aboveCount++;
+  const backgroundIsBright = aboveCount >= (len - aboveCount);
+
+  for (let i = 0, p = 0; p < len; i += 4, p++) {
+    let val = sharp[p] > threshold ? 255 : 0;
+    if (!backgroundIsBright) val = 255 - val; // normalize to black text / white background
+    d[i] = d[i + 1] = d[i + 2] = val;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return canvas;
+}
+
+async function runOcrOnRegion(sx, sy, sW, sH){
+  const canvas = captureAndPrepCanvas(sx, sy, sW, sH);
+  // PSM 6 ("assume a single uniform block of text") suits a cropped title
+  // region much better than the default automatic layout analysis, which
+  // tends to get confused by stylized cover typography.
+  const { data: { text } } = await Tesseract.recognize(canvas, 'spa+eng', {
+    tessedit_pageseg_mode: '6',
+  });
+  return text.replace(/\s+/g, ' ').trim();
+}
+
 els.captureBtn.onclick = async () => {
   if (currentMode !== 'cover') return;
   els.scanStatus.textContent = 'Reading text from the cover…';
   els.scanStatus.className = 'status';
-  const canvas = els.hiddenCanvas;
   const vw = els.video.videoWidth, vh = els.video.videoHeight;
 
-  // Crop to the same region the on-screen reticle highlights (12%/20% margins)
-  // instead of OCR-ing the whole photo — cuts out background/cover art noise
-  // and lets Tesseract focus compute on the text that actually matters.
-  const sx = vw * 0.12, sy = vh * 0.20;
-  const sW = vw * 0.76, sH = vh * 0.60;
-  canvas.width = sW;
-  canvas.height = sH;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(els.video, sx, sy, sW, sH, 0, 0, sW, sH);
-
-  // Simple grayscale + contrast stretch — helps Tesseract on busy cover backgrounds.
-  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const d = imgData.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    const val = gray < 128 ? Math.max(0, gray * 0.75) : Math.min(255, 128 + (gray - 128) * 1.4);
-    d[i] = d[i + 1] = d[i + 2] = val;
-  }
-  ctx.putImageData(imgData, 0, 0);
-
   try {
-    // Spanish + English, since covers in this library are often in Spanish.
-    const { data: { text } } = await Tesseract.recognize(canvas, 'spa+eng');
-    const cleaned = text.replace(/\s+/g, ' ').trim();
+    // Pass 1: the same region the on-screen reticle highlights — cuts out
+    // background/cover art noise and lets the OCR focus on the text that
+    // actually matters.
+    let cleaned = await runOcrOnRegion(vw * 0.12, vh * 0.20, vw * 0.76, vh * 0.60);
+
+    // Pass 2 (automatic fallback): if that came back too short — e.g. the
+    // title didn't fully fit inside the box, or a stylized font needed more
+    // context to resolve — retry on the full frame instead of making the
+    // person recapture.
+    if (!cleaned || cleaned.length < 3) {
+      els.scanStatus.textContent = 'Not much there — trying the full frame…';
+      cleaned = await runOcrOnRegion(0, 0, vw, vh);
+    }
+
     if (!cleaned || cleaned.length < 3) {
       els.scanStatus.textContent = '✗ Could not read any text — try filling more of the box with just the title, in brighter light, and hold still.';
       els.scanStatus.className = 'status error';
