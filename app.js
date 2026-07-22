@@ -163,7 +163,7 @@ let currentMode = 'barcode';
 let scanning = false;
 
 async function startBarcodeScan(){
-  stopEverything();
+  await stopEverything();
   els.scanStatus.textContent = 'Point the camera at the barcode.';
   await startQrRegion();
 }
@@ -250,8 +250,9 @@ if (els.torchBtn) {
 }
 
 function stopEverything(){
+  let stopPromise = Promise.resolve();
   if (html5QrCode && scanning) {
-    html5QrCode.stop().catch(()=>{});
+    stopPromise = html5QrCode.stop().catch(()=>{});
     scanning = false;
   }
   torchOn = false;
@@ -259,6 +260,7 @@ function stopEverything(){
   const region = document.getElementById('qrRegion');
   if (region) region.style.display = 'none';
   els.video.style.display = 'block';
+  return stopPromise; // callers should await this before requesting the camera again
 }
 
 let lastDecoded = null;
@@ -268,10 +270,15 @@ function onIsbnDecoded(text){
   const isbn = text.replace(/[^0-9Xx]/g, '');
   if (isbn.length !== 10 && isbn.length !== 13) {
     // Likely a supplemental/price add-on barcode next to the real one, or a misread.
+    // Important: do NOT stop/restart the scanner here. The scan loop is already
+    // running fine — restarting it from inside its own decode callback raced
+    // the old camera stream against a newly-requested one and could freeze or
+    // crash the tab, especially on repeat reads of the same non-ISBN barcode.
     els.scanStatus.textContent = `Read a barcode ("${isbn}") that isn't a valid ISBN length — try centering the main barcode.`;
     els.scanStatus.className = 'status error';
-    lastDecoded = null; // allow retry on the same code
-    startBarcodeScan();
+    // Allow the same code to be considered again after a short pause, instead
+    // of clearing it immediately (which caused an instant re-trigger loop).
+    setTimeout(() => { if (lastDecoded === text) lastDecoded = null; }, 1500);
     return;
   }
   els.scanStatus.textContent = '✓ Barcode found — looking it up…';
@@ -283,7 +290,7 @@ function onIsbnDecoded(text){
 /* ---------- Cover camera (plain getUserMedia, for OCR mode) ---------- */
 let coverStream = null;
 async function startCoverCamera(){
-  stopEverything();
+  await stopEverything();
   els.scanStatus.textContent = 'Frame the title & author, then capture.';
   els.scanStatus.className = 'status';
   coverStream = await navigator.mediaDevices.getUserMedia({
