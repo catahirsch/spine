@@ -212,24 +212,31 @@ async function startQrRegion(){
   }
 }
 
-/* Torch (flashlight) toggle, when the device supports it */
+/* Torch (flashlight) toggle, when the device supports it — works for both modes */
 let torchOn = false;
 function detectTorchSupport(){
   try {
     const caps = html5QrCode.getRunningTrackCapabilities();
-    if (caps && caps.torch) {
-      els.torchBtn.classList.remove('hidden');
-    } else {
-      els.torchBtn.classList.add('hidden');
-    }
+    els.torchBtn.classList.toggle('hidden', !(caps && caps.torch));
+  } catch { els.torchBtn.classList.add('hidden'); }
+}
+function detectCoverTorchSupport(){
+  try {
+    const track = coverStream && coverStream.getVideoTracks()[0];
+    const caps = track && track.getCapabilities && track.getCapabilities();
+    els.torchBtn.classList.toggle('hidden', !(caps && caps.torch));
   } catch { els.torchBtn.classList.add('hidden'); }
 }
 if (els.torchBtn) {
   els.torchBtn.onclick = async () => {
-    if (!html5QrCode || !scanning) return;
     torchOn = !torchOn;
     try {
-      await html5QrCode.applyVideoConstraints({ advanced: [{ torch: torchOn }] });
+      if (currentMode === 'barcode' && html5QrCode && scanning) {
+        await html5QrCode.applyVideoConstraints({ advanced: [{ torch: torchOn }] });
+      } else if (currentMode === 'cover' && coverStream) {
+        const track = coverStream.getVideoTracks()[0];
+        await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+      }
       els.torchBtn.classList.toggle('active', torchOn);
     } catch { /* not supported on this device/browser */ }
   };
@@ -252,6 +259,14 @@ function onIsbnDecoded(text){
   if (text === lastDecoded) return; // debounce repeat frames
   lastDecoded = text;
   const isbn = text.replace(/[^0-9Xx]/g, '');
+  if (isbn.length !== 10 && isbn.length !== 13) {
+    // Likely a supplemental/price add-on barcode next to the real one, or a misread.
+    els.scanStatus.textContent = `Read a barcode ("${isbn}") that isn't a valid ISBN length — try centering the main barcode.`;
+    els.scanStatus.className = 'status error';
+    lastDecoded = null; // allow retry on the same code
+    startBarcodeScan();
+    return;
+  }
   els.scanStatus.textContent = '✓ Barcode found — looking it up…';
   els.scanStatus.className = 'status success';
   stopEverything();
@@ -263,10 +278,14 @@ let coverStream = null;
 async function startCoverCamera(){
   stopEverything();
   els.scanStatus.textContent = 'Frame the title & author, then capture.';
-  coverStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+  els.scanStatus.className = 'status';
+  coverStream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+  });
   els.video.srcObject = coverStream;
   els.video.style.display = 'block';
   await els.video.play();
+  detectCoverTorchSupport();
 }
 function stopCoverCamera(){
   if (coverStream) { coverStream.getTracks().forEach(t => t.stop()); coverStream = null; }
@@ -282,7 +301,7 @@ function setMode(mode){
   els.captureBtn.style.display = mode === 'cover' ? 'block' : 'none';
   document.getElementById('modeTip').textContent = mode === 'barcode'
     ? 'Tip: hold steady about 4–6 inches from the barcode, in good light. Fill as much of the frame as you can.'
-    : 'Tip: frame the title and author clearly, avoid glare, and hold the phone still before tapping capture.';
+    : 'Tip: keep the title & author inside the highlighted box, avoid glare, and hold the phone still before tapping capture.';
   stopCoverCamera();
   lastDecoded = null;
   if (mode === 'barcode') startBarcodeScan();
@@ -292,22 +311,44 @@ function setMode(mode){
 els.captureBtn.onclick = async () => {
   if (currentMode !== 'cover') return;
   els.scanStatus.textContent = 'Reading text from the cover…';
+  els.scanStatus.className = 'status';
   const canvas = els.hiddenCanvas;
-  canvas.width = els.video.videoWidth;
-  canvas.height = els.video.videoHeight;
-  canvas.getContext('2d').drawImage(els.video, 0, 0);
-  const dataUrl = canvas.toDataURL('image/png');
+  const vw = els.video.videoWidth, vh = els.video.videoHeight;
+
+  // Crop to the same region the on-screen reticle highlights (12%/20% margins)
+  // instead of OCR-ing the whole photo — cuts out background/cover art noise
+  // and lets Tesseract focus compute on the text that actually matters.
+  const sx = vw * 0.12, sy = vh * 0.20;
+  const sW = vw * 0.76, sH = vh * 0.60;
+  canvas.width = sW;
+  canvas.height = sH;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(els.video, sx, sy, sW, sH, 0, 0, sW, sH);
+
+  // Simple grayscale + contrast stretch — helps Tesseract on busy cover backgrounds.
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    const val = gray < 128 ? Math.max(0, gray * 0.75) : Math.min(255, 128 + (gray - 128) * 1.4);
+    d[i] = d[i + 1] = d[i + 2] = val;
+  }
+  ctx.putImageData(imgData, 0, 0);
+
   try {
-    const { data: { text } } = await Tesseract.recognize(dataUrl, 'eng');
+    // Spanish + English, since covers in this library are often in Spanish.
+    const { data: { text } } = await Tesseract.recognize(canvas, 'spa+eng');
     const cleaned = text.replace(/\s+/g, ' ').trim();
-    if (!cleaned) {
-      els.scanStatus.textContent = 'Could not read any text — try a closer, well-lit shot.';
+    if (!cleaned || cleaned.length < 3) {
+      els.scanStatus.textContent = '✗ Could not read any text — try filling more of the box with just the title, in brighter light, and hold still.';
+      els.scanStatus.className = 'status error';
       return;
     }
     els.scanStatus.textContent = 'Read: "' + cleaned.slice(0, 60) + '…" — searching Google Books…';
     lookupByText(cleaned);
   } catch (err) {
-    els.scanStatus.textContent = 'OCR failed: ' + err.message;
+    els.scanStatus.textContent = '✗ OCR failed: ' + err.message;
+    els.scanStatus.className = 'status error';
   }
 };
 
@@ -324,13 +365,43 @@ els.manualLookupBtn.onclick = () => {
   }
 };
 
-/* ---------- Google Books lookup ---------- */
+/* ---------- Google Books lookup (with Open Library fallback for ISBNs) ---------- */
 async function lookupByIsbn(isbn){
+  els.scanStatus.textContent = 'Looking up ISBN ' + isbn + ' in Google Books…';
   const key = settings.booksKey ? '&key=' + encodeURIComponent(settings.booksKey) : '';
   const url = `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}${key}`;
-  const res = await fetch(url);
-  const json = await res.json();
-  handleBooksResult(json, isbn);
+  try {
+    const res = await fetch(url);
+    const json = await res.json();
+    if (json.items && json.items.length) {
+      handleBooksResult(json, isbn);
+      return;
+    }
+  } catch { /* fall through to Open Library */ }
+
+  // Google Books' coverage is noticeably weaker for regional/Spanish-language
+  // publishers, so fall back to Open Library, which often has these.
+  els.scanStatus.textContent = 'Not in Google Books — trying Open Library…';
+  try {
+    const olUrl = `https://openlibrary.org/api/books?bibkeys=ISBN:${isbn}&format=json&jscmd=data`;
+    const olRes = await fetch(olUrl);
+    const olJson = await olRes.json();
+    const entry = olJson['ISBN:' + isbn];
+    if (entry) {
+      showResult({
+        title: entry.title || 'Unknown title',
+        authors: (entry.authors || []).map(a => a.name).join(', ') || 'Unknown author',
+        edition: [entry.publishers && entry.publishers.map(p => p.name).join(', '), entry.publish_date]
+          .filter(Boolean).join(' · ') || '—',
+        isbn,
+        thumb: (entry.cover && (entry.cover.medium || entry.cover.small)) || '',
+      });
+      return;
+    }
+  } catch { /* no luck there either */ }
+
+  els.scanStatus.textContent = `✗ ISBN ${isbn} isn't in Google Books or Open Library. Try Cover photo mode, or enter the title manually below.`;
+  els.scanStatus.className = 'status error';
 }
 
 async function lookupByText(text){
