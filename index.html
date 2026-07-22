@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Spine — Book Library Scanner</title>
+<meta name="theme-color" content="#1F3B2E" />
+<link rel="manifest" href="manifest.json" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="shelf-band" aria-hidden="true">
+  <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">Spine</span>
+    <span class="brand-sub">library scanner</span>
+  </div>
+  <button id="settingsBtn" class="icon-btn" title="Settings">⚙</button>
+</header>
+
+<main>
+
+  <!-- SETTINGS PANEL -->
+  <section id="settingsPanel" class="panel hidden">
+    <h2>Connect your library</h2>
+    <p class="hint">One-time setup. See <code>README.md</code> for how to get these values.</p>
+
+    <label>Google OAuth Client ID
+      <input type="text" id="clientId" placeholder="xxxxxxxx.apps.googleusercontent.com" />
+    </label>
+
+    <label>Google Sheet ID
+      <input type="text" id="sheetId" placeholder="the long ID from your sheet's URL" />
+    </label>
+
+    <label>Sheet / tab name
+      <input type="text" id="sheetName" placeholder="e.g. Library" value="Library" />
+    </label>
+
+    <p class="hint">Column fields accept a letter (e.g. <code>D</code>) or the exact header text from row 1 (e.g. <code>Dueño</code>).</p>
+    <div class="row">
+      <label>ISBN column
+        <input type="text" id="colIsbn" value="A" />
+      </label>
+      <label>Title column
+        <input type="text" id="colTitle" value="B" />
+      </label>
+      <label>Owner column
+        <input type="text" id="colOwner" value="Dueño" />
+      </label>
+    </div>
+    <div class="row">
+      <label>Author column <span class="opt">(for new rows)</span>
+        <input type="text" id="colAuthor" value="C" />
+      </label>
+      <label>Edition column <span class="opt">(for new rows)</span>
+        <input type="text" id="colEdition" value="" />
+      </label>
+    </div>
+
+    <label>Google Books API key <span class="opt">(optional, raises rate limits)</span>
+      <input type="text" id="booksKey" placeholder="optional" />
+    </label>
+
+    <div class="btn-row">
+      <button id="saveSettings" class="btn primary">Save</button>
+      <button id="signInBtn" class="btn ghost">Sign in with Google</button>
+    </div>
+    <p id="authStatus" class="status"></p>
+  </section>
+
+  <!-- SCAN VIEW -->
+  <section id="scanView" class="panel">
+    <div class="scan-frame">
+      <video id="video" playsinline muted></video>
+      <div class="reticle"></div>
+      <div class="scan-line"></div>
+    </div>
+
+    <div class="mode-toggle">
+      <button id="modeBarcode" class="mode-btn active">Barcode</button>
+      <button id="modeCover" class="mode-btn">Cover photo</button>
+    </div>
+
+    <button id="captureBtn" class="btn primary wide">Capture cover</button>
+    <p id="scanStatus" class="status">Point the camera at the barcode.</p>
+  </section>
+
+  <!-- RESULT VIEW -->
+  <section id="resultView" class="panel hidden">
+    <div class="book-card">
+      <img id="bookThumb" src="" alt="" />
+      <div class="book-meta">
+        <h2 id="bookTitle">—</h2>
+        <p id="bookAuthor" class="muted">—</p>
+        <p id="bookEdition" class="muted small">—</p>
+        <p id="bookIsbn" class="muted small mono">—</p>
+      </div>
+    </div>
+
+    <div id="matchBox" class="match-box">
+      <p id="matchStatus" class="status">Searching your sheet…</p>
+    </div>
+
+    <label>New owner
+      <input type="text" id="ownerInput" placeholder="e.g. Priya" />
+    </label>
+
+    <div class="btn-row">
+      <button id="updateOwnerBtn" class="btn primary wide" disabled>Update owner</button>
+    </div>
+    <button id="addRowBtn" class="btn ghost wide hidden">Add as new book in sheet</button>
+    <button id="scanAgainBtn" class="btn ghost wide">Scan next book</button>
+  </section>
+
+</main>
+
+<canvas id="hiddenCanvas" class="hidden"></canvas>
+
+<!-- Barcode scanning -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<!-- OCR fallback for cover text -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.0.4/tesseract.min.js"></script>
+<!-- Google Identity Services (OAuth) -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+
+<script src="app.js"></script>
+</body>
+</html>
